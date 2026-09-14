@@ -1,4 +1,4 @@
-# Observability POC: Node.js Microservices
+# Implementing Observability in Node.js Microservices
 
 Node.js microservices wired up with distributed tracing (OpenTelemetry →
 Zipkin), metrics (OpenTelemetry → Prometheus → Grafana), centralized logs
