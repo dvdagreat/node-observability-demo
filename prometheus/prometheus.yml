@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # App metrics from all 4 services, relayed through the collector.
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  - job_name: "rabbitmq"
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: "postgres-exporters"
+    static_configs:
+      - targets:
+          - "order-db-exporter:9187"
+          - "inventory-db-exporter:9187"
+          - "notification-db-exporter:9187"
+        labels:
+          group: "postgres"
