@@ -92,16 +92,6 @@ services/
 on purpose rather than shared, so each service's Docker build stays
 self-contained.
 
-## Versions
-
-No lockfiles, so `docker compose build` always pulls current releases.
-At time of writing:
-
-- `@opentelemetry/sdk-node` 0.222.x, `auto-instrumentations-node` 0.80.x (bundles `instrumentation-pino` 0.68.x, which is what forwards logs to OTLP)
-- Express 5.x, `pg` 8.x, `amqplib` 2.x, `pino` 10.x
-- `http-proxy-middleware` 4.x needs Node ≥ 22.15, which is why every service runs on `node:22-alpine`, not 20
-- Zipkin, Prometheus, Grafana, Loki, OTel Collector Contrib, RabbitMQ 4, Postgres: all `:latest`
-
 ## Good to know
 
 - Three separate Postgres *containers*, not three databases in one instance. No service can reach another's DB.
