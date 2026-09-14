@@ -95,8 +95,4 @@ self-contained.
 ## Good to know
 
 - Three separate Postgres *containers*, not three databases in one instance. No service can reach another's DB.
-- Postgres 18 expects one volume mount at `/var/lib/postgresql`, not `/var/lib/postgresql/data`; already handled here.
-- RabbitMQ's Prometheus plugin runs in aggregated mode, so the queue-depth panel is a cluster-wide total, not per-queue.
-- `resourceDetectors: []` in `tracing.js` is intentional: the default host/process detectors were stamping ~10 extra tags on every span, which is what OOM'd Zipkin under sustained load. Don't remove it without also raising Zipkin's memory limits back up.
-- Loki's OTLP ingestion keeps only `service_name`/`service_namespace`/`deployment_environment_name` as indexed labels; everything else pino logs (trace_id, req headers, order IDs, ...) lands as structured metadata instead. That's deliberate: indexing high-cardinality fields like `trace_id` as labels would blow up Loki the same way the old resource detectors blew up Zipkin.
 - There's no one-click "jump from a log to its trace" link. Grafana's datasource-level `correlations:` provisioning crashed Grafana outright on this version (a nil-pointer panic in its datasource provisioner), so that wiring was left out rather than shipped broken. Copy `trace_id` out of a log line's structured metadata and paste it into Zipkin's search instead.
