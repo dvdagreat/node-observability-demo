@@ -1,0 +1,20 @@
+'use strict';
+
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  host: process.env.PGHOST || 'inventory-db',
+  port: Number(process.env.PGPORT || 5432),
+  user: process.env.PGUSER || 'inventory_user',
+  password: process.env.PGPASSWORD || 'inventory_pass',
+  database: process.env.PGDATABASE || 'inventory_db',
+  max: 10,
+  idleTimeoutMillis: 30000,
+});
+
+pool.on('error', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('[db] unexpected error on idle client', err);
+});
+
+module.exports = { pool };
