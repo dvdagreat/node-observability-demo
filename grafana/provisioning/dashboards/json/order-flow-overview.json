@@ -1,0 +1,177 @@
+{
+  "title": "Order Flow - Observability POC",
+  "uid": "order-flow-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "tags": ["poc", "microservices", "opentelemetry"],
+  "panels": [
+    { "type": "row", "title": "HTTP golden signals", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100 },
+
+    {
+      "type": "timeseries",
+      "title": "Request rate by service",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 1,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count[1m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP error rate (5xx) by service",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[5m])) / sum by (service_name) (rate(http_server_request_duration_seconds_count[5m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "P95 HTTP latency by service",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (service_name, le) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "Order -> Inventory -> Notification business flow", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "id": 101 },
+
+    {
+      "type": "timeseries",
+      "title": "Orders created (rate)",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(orders_created_total[1m]))", "legendFormat": "orders/sec" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Order status transitions",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 10 },
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (status) (rate(order_status_updates_total[1m]))", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Inventory reservations by result",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 10 },
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (result) (rate(inventory_reservations_total[1m]))", "legendFormat": "{{result}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Notifications by outcome",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (outcome) (rate(notifications_sent_total[1m]))", "legendFormat": "{{outcome}}" }
+      ]
+    },
+
+    { "type": "row", "title": "Latency & inventory & queues", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "id": 102 },
+
+    {
+      "type": "timeseries",
+      "title": "Order fulfillment duration (order.created -> inventory decision)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(order_fulfillment_duration_seconds_bucket[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(order_fulfillment_duration_seconds_bucket[5m])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "type": "barchart",
+      "title": "Current inventory stock level by product",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+      "id": 9,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "inventory_stock_level", "legendFormat": "{{product_id}}", "instant": true, "format": "table" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RabbitMQ queue depth (all queues)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "id": 10,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rabbitmq_queue_messages_ready", "legendFormat": "ready" },
+        { "refId": "B", "expr": "rabbitmq_queue_messages_unacked", "legendFormat": "unacked" }
+      ]
+    },
+
+    { "type": "row", "title": "Database per service", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "id": 103 },
+
+    {
+      "type": "timeseries",
+      "title": "Postgres active connections per service DB",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 11,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pg_stat_database_numbackends{datname=~\"order_db|inventory_db|notification_db\"}",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Postgres committed transactions/sec per service DB",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 12,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (datname) (rate(pg_stat_database_xact_commit{datname=~\"order_db|inventory_db|notification_db\"}[1m]))",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    }
+  ]
+}
