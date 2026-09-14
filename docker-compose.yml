@@ -1,0 +1,320 @@
+name: observability-poc
+
+networks:
+  observability-net:
+    driver: bridge
+
+volumes:
+  order-db-data:
+  inventory-db-data:
+  notification-db-data:
+  rabbitmq-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+services:
+  # ---------------------------------------------------------------------
+  # Databases - one Postgres instance per microservice (database-per-service)
+  # ---------------------------------------------------------------------
+  order-db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_pass
+      POSTGRES_DB: order_db
+    restart: unless-stopped
+    volumes:
+      - order-db-data:/var/lib/postgresql
+      - ./services/order-service/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_user -d order_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [observability-net]
+
+  inventory-db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: inventory_user
+      POSTGRES_PASSWORD: inventory_pass
+      POSTGRES_DB: inventory_db
+    restart: unless-stopped
+    volumes:
+      - inventory-db-data:/var/lib/postgresql
+      - ./services/inventory-service/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory_user -d inventory_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [observability-net]
+
+  notification-db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: notification_pass
+      POSTGRES_DB: notification_db
+    restart: unless-stopped
+    volumes:
+      - notification-db-data:/var/lib/postgresql
+      - ./services/notification-service/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [observability-net]
+
+  # One exporter per DB, so each service's metrics stay separate in Grafana.
+  order-db-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://order_user:order_pass@order-db:5432/order_db?sslmode=disable"
+    restart: unless-stopped
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks: [observability-net]
+
+  inventory-db-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://inventory_user:inventory_pass@inventory-db:5432/inventory_db?sslmode=disable"
+    restart: unless-stopped
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+    networks: [observability-net]
+
+  notification-db-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://notification_user:notification_pass@notification-db:5432/notification_db?sslmode=disable"
+    restart: unless-stopped
+    depends_on:
+      notification-db:
+        condition: service_healthy
+    networks: [observability-net]
+
+  # ---------------------------------------------------------------------
+  # Messaging
+  # ---------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    restart: unless-stopped
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+      - "15692:15692" # Prometheus metrics
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [observability-net]
+
+  # ---------------------------------------------------------------------
+  # Observability backends
+  # ---------------------------------------------------------------------
+  zipkin:
+    image: openzipkin/zipkin:latest
+    environment:
+      # In-memory storage is unbounded by default - cap it so Zipkin drops
+      # old spans instead of OOMing. Real fix for the OOM was in tracing.js.
+      JAVA_OPTS: "-Xms384m -Xmx768m"
+      STORAGE_TYPE: mem
+      MEM_MAX_SPANS: "200000"
+    mem_limit: 1g
+    ports:
+      - "9411:9411"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9411/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [observability-net]
+
+  loki:
+    image: grafana/loki:latest
+    command: ["-config.file=/etc/loki/local-config.yaml", "-reporting.enabled=false"]
+    volumes:
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+    networks: [observability-net]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus exporter (scraped by Prometheus)
+      - "13133:13133" # Health check extension
+    restart: unless-stopped
+    depends_on:
+      - zipkin
+      - loki
+    networks: [observability-net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+      - rabbitmq
+    networks: [observability-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3300:3000"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - zipkin
+      - loki
+    networks: [observability-net]
+
+  # ---------------------------------------------------------------------
+  # Microservices
+  # ---------------------------------------------------------------------
+  order-service:
+    build: ./services/order-service
+    environment:
+      PORT: 3000
+      OTEL_SERVICE_NAME: order-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEPLOYMENT_ENVIRONMENT: poc
+      PGHOST: order-db
+      PGPORT: 5432
+      PGUSER: order_user
+      PGPASSWORD: order_pass
+      PGDATABASE: order_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      EVENTS_EXCHANGE: events
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      order-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks: [observability-net]
+
+  inventory-service:
+    build: ./services/inventory-service
+    environment:
+      PORT: 3001
+      OTEL_SERVICE_NAME: inventory-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEPLOYMENT_ENVIRONMENT: poc
+      PGHOST: inventory-db
+      PGPORT: 5432
+      PGUSER: inventory_user
+      PGPASSWORD: inventory_pass
+      PGDATABASE: inventory_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      EVENTS_EXCHANGE: events
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks: [observability-net]
+
+  notification-service:
+    build: ./services/notification-service
+    environment:
+      PORT: 3002
+      OTEL_SERVICE_NAME: notification-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEPLOYMENT_ENVIRONMENT: poc
+      PGHOST: notification-db
+      PGPORT: 5432
+      PGUSER: notification_user
+      PGPASSWORD: notification_pass
+      PGDATABASE: notification_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      EVENTS_EXCHANGE: events
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks: [observability-net]
+
+  api-gateway:
+    build: ./services/api-gateway
+    environment:
+      PORT: 8080
+      OTEL_SERVICE_NAME: api-gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEPLOYMENT_ENVIRONMENT: poc
+      ORDER_SERVICE_URL: http://order-service:3000
+      INVENTORY_SERVICE_URL: http://inventory-service:3001
+      NOTIFICATION_SERVICE_URL: http://notification-service:3002
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      - order-service
+      - inventory-service
+      - notification-service
+    networks: [observability-net]
+
+  load-generator:
+    build: ./services/load-generator
+    environment:
+      GATEWAY_URL: http://api-gateway:8080
+      MIN_INTERVAL_MS: 400
+      MAX_INTERVAL_MS: 1500
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+    networks: [observability-net]
